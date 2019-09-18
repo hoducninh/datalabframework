@@ -84,7 +84,7 @@ def path_to_jdbc(md, provider=False):
     e = filter_empty(path.split('/'))
     
     if len(e)==0:
-        pass;
+        pass
     elif len(e)==1:
         if provider:
             database = e[0] or None
@@ -273,13 +273,16 @@ def get_compression(path):
     return d.get(ext)
      
 def get_format(md):
-    
+
     if md['format']:
         return md['format']
-    
+
     # get the provider format
     if md['service'] in ['sqlite', 'mysql', 'postgres', 'mssql', 'oracle']:
         return 'jdbc'
+
+    if md['service'] in ['mongodb']:
+        return 'com.mongodb.spark.sql.DefaultSource'
 
     if md['service'] in ['elastic']:
         return 'json'
@@ -288,16 +291,16 @@ def get_format(md):
     query = get_sql_query(md['path'])
     if query:
         return 'jdbc'
-    
+
     # extract the format from file extension
     #‘.gz’, ‘.bz2’, ‘.zip’, ‘.snappy’, '.deflate'
     path, ext = os.path.splitext(md['path'])
     if get_compression(md['path']):
         _, ext = os.path.splitext(path)
-    
+
     if ext and ext[0]=='.':
         ext = ext[1:]
-        
+
     # default is None
     return ext or None
 
@@ -320,6 +323,7 @@ def get_port(service):
         'mysql': 3306,
         'postgres': 5432,
         'mssql': 1433,
+        'mongodb': 27017,
         'oracle': 1521,
         'clickhouse':8123,
         'elastic': 9200,
@@ -334,6 +338,7 @@ def get_version(service):
         'mysql': '8.0.12',
         'postgres': '42.2.5',
         'mssql': '6.4.0.jre8',
+        'mongodb': '2.2.0',
         'oracle': '12.2.0.1',
         'clickhouse':'0.1.54',
         's3a':'3.1.1'
@@ -368,6 +373,8 @@ def get_url(md):
         url = f"jdbc:oracle:thin:@//{host_port}/{md['database']}"
     elif service == 'elastic':
         url = f"http://{host_port}/{md['database']}"
+    elif service == 'mongodb':
+        url = f"mongodb://{md['username']}:{md['password']}@{host_port}/{md['database']}"
 
     return url
 

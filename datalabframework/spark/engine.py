@@ -462,91 +462,85 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
     
         return kwargs
     
-    def load_csv(self, path=None, provider=None, *args, 
+    def load_csv(self, path=None, provider=None, *args,
                  sep=None, header=None, **kwargs):
-
-        #return None 
         obj = None
-        
         md = Resource(
-                path, 
-                provider, 
-                sep=sep, 
-                header=header, 
+                path,
+                provider,
+                sep=sep,
+                header=header,
                 **kwargs)
 
         # download if necessary
         md = get_local(md)
-        
+
         options =  md['options']
-        
+
         # after collecting from metadata, or method call, define csv defaults
         options['header'] = options.get('header') or True
         options['inferSchema'] = options.get('inferSchema') or True
         options['sep'] = options.get('sep') or ','
-        
+
         local = self.is_spark_local()
-                               
+
         try:
             #three approaches: local, cluster, and service
             if md['service'] == 'file' and local:
                 obj = self.context.read.options(**options).csv(md['url'])
             elif md['service'] == 'file':
                 logging.warning(
-                    f'local file + spark cluster: loading using pandas reader', 
+                    f'local file + spark cluster: loading using pandas reader',
                     extra={'md': to_dict(md)})
-                
+
                 df = pd.read_csv(
-                        md['url'], 
-                        sep=options['sep'], 
+                        md['url'],
+                        sep=options['sep'],
                         header=options['header'])
                 obj = self.context.createDataFrame(df)
             elif md['service'] in ['hdfs', 's3a']:
                 obj = self.context.read.options(**options).csv(md['url'])
             else:
                 logging.error(
-                    f'Unknown resource service "{md["service"]}"', 
+                    f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return obj     
-                               
+                return obj
+
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
         except Exception as e:
-            logging.error(e, extra={'md': md})
-    
+            logging.error(str(e), extra={'md': md})
+
         return obj
 
-        
-    def load_parquet(self, path=None, provider=None, *args, 
+    def load_parquet(self, path=None, provider=None, *args,
                  mergeSchema=None, **kwargs):
-
-        #return None 
         obj = None
-        
+
         md = Resource(
-                path, 
-                provider, 
+                path,
+                provider,
                 format='parquet',
-                mergeSchema=mergeSchema, 
+                mergeSchema=mergeSchema,
                 **kwargs)
 
         # download if necessary
         md = get_local(md)
 
         options =  md['options']
-        
+
         # after collecting from metadata, or method call, define csv defaults
         options['mergeSchema'] = options.get('mergeSchema') or True
-        
+
         local = self.is_spark_local()
-                               
+
         try:
             #three approaches: local, cluster, and service
             if md['service'] == 'file' and local:
                 obj = self.context.read.options(**options).parquet(md['url'])
             elif md['service'] == 'file':
                 logging.warning(
-                    f'local file + spark cluster: loading using pandas reader', 
+                    f'local file + spark cluster: loading using pandas reader',
                     extra={'md': to_dict(md)})
                 #fallback to the pandas reader, then convert to spark
                 df = pd.read_parquet(md['url'])
@@ -555,72 +549,69 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 obj = self.context.read.options(**options).parquet(md['url'])
             else:
                 logging.error(
-                    f'Unknown resource service "{md["service"]}"', 
+                    f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return obj     
-                               
+                return obj
+
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
         except Exception as e:
-            logging.error(e, extra={'md': md})
-    
+            logging.error(str(e), extra={'md': md})
+
         return obj
 
-    def load_json(self, path=None, provider=None, *args, 
+    def load_json(self, path=None, provider=None, *args,
                  lines=True, **kwargs):
-
-        #return None 
         obj = None
-        
+
         md = Resource(
-                path, 
-                provider, 
+                path,
+                provider,
                 format='json',
-                lines=lines, 
+                lines=lines,
                 **kwargs)
 
         # download if necessary
         md = get_local(md)
 
         options =  md['options']
-        
+
         # after collecting from metadata, or method call, define csv defaults
         options['lines'] = options.get('lines') or True
         options['inferSchema'] = options.get('inferSchema') or True
-        
+
         local = self.is_spark_local()
-                               
+
         try:
             #three approaches: local, cluster, and service
             if md['service'] == 'file' and options['lines']:
                 obj = self.context.read.options(**options).json(md['url'])
             elif md['service'] == 'file':
-                # fallback to the pandas reader, 
+                # fallback to the pandas reader,
                 # then convert to spark
                 logging.warning(
-                    f'local file + spark cluster: loading using pandas reader', 
+                    f'local file + spark cluster: loading using pandas reader',
                     extra={'md': to_dict(md)})
                 df = pd.read_json(
-                        md['url'], 
+                        md['url'],
                         lines=options['lines'])
                 obj = self.context.createDataFrame(df)
             elif md['service'] in ['hdfs', 's3a']:
                 obj = self.context.read.options(**options).json(md['url'])
             else:
                 logging.error(
-                    f'Unknown resource service "{md["service"]}"', 
+                    f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return obj     
-                               
+                return obj
+
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
         except Exception as e:
-            logging.error(e, extra={'md': md})
-    
+            logging.error(str(e), extra={'md': md})
+
         return obj
 
     def load_jdbc(self, path=None, provider=None, *args, **kwargs):
-        #return None 
         obj = None
 
         md = Resource(
@@ -645,42 +636,37 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 obj = obj.load(**kwargs)
             else:
                 logging.error(
-                    f'Unknown resource service "{md["service"]}"', 
+                    f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return obj     
-                               
+                return obj
+
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
         except Exception as e:
-            logging.error(e, extra={'md': md})
-    
+            logging.error(str(e), extra={'md': md})
+
         return obj
 
-    def load_mongo(self, path=None, provider=None, *args, **kwargs): 
+    def load_mongo(self, path=None, provider=None, *args, **kwargs):
         obj = None
 
         md = Resource(
                 path,
                 provider,
-                format='com.mongodb.spark.sql.DefaultSource',
+                format='mongo',
                 **kwargs)
 
         options = md['options']
 
         try:
             if md['service'] == 'mongodb':
-                qm_index = md['url'].index('?')
-                base_cs = md['url'][:qm_index] if qm_index else md['url']
-                options_cs = md['url'][qm_index:] if qm_index else ''
-                uri = f"{base_cs}.{md['resource_path']}{options_cs}"
-
                 obj = self.context.read \
-                    .format('com.mongodb.spark.sql.DefaultSource') \
-                    .option('spark.mongodb.input.uri', uri ) \
+                    .format('mongo') \
+                    .option('uri', md['url']) \
                     .options(**options)
 
                 # load the data
-                obj = obj.load(**kargs)
+                obj = obj.load(**kwargs)
             else:
                 logging.error(
                     f'Unknown resource service "{md["service"]}"',
@@ -690,16 +676,16 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
         except Exception as e:
-            logging.error(e, extra={'md': md})
+            logging.error(str(e), extra={'md': md})
 
         return obj
 
     def load(self, path=None, provider=None, *args, format=None, **kwargs):
-        
+
         md = Resource(
-                path, 
-                provider, 
-                format=format, 
+                path,
+                provider,
+                format=format,
                 **kwargs)
 
         if md['format'] == 'csv':
@@ -710,11 +696,11 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             return self.load_parquet(path, provider, **kwargs)
         elif md['format'] == 'jdbc':
             return self.load_jdbc(path, provider, **kwargs)
-        elif md['format'] == 'com.mongodb.spark.sql.DefaultSource':
+        elif md['format'] == 'mongo':
             return self.load_mongo(path, provider, **kwargs)
         else:
             logging.error(
-                    f'Unknown resource format "{md["format"]}"', 
+                    f'Unknown resource format "{md["format"]}"',
                     extra={'md': to_dict(md)})
         return None
 
@@ -914,27 +900,26 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             raise e
     
         return True
-                               
-                               
-    def save_json(self, obj, path=None, provider=None, *args, 
+
+    def save_json(self, obj, path=None, provider=None, *args,
                  mode=None, lines=None, **kwargs):
 
         md = Resource(
-                path, 
-                provider, 
-                format='csv', 
-                mode=mode, 
+                path,
+                provider,
+                format='csv',
+                mode=mode,
                 lines=lines,
                 **kwargs)
 
         options = md['options']
-        
+
         # after collecting from metadata, or method call, define csv defaults
         options['mode'] = options['mode'] or 'overwrite'
         options['lines'] = options['lines'] or True
-                               
+
         local = self.is_spark_local()
-                               
+
         try:
             #three approaches: local, cluster, and service
             if local and md['service'] == 'file' and options['lines']:
@@ -953,8 +938,8 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
                 # save with pandas
                 obj.toPandas().to_json(
-                    md['url'], 
-                    mode=options['mode'], 
+                    md['url'],
+                    mode=options['mode'],
                     lines=options['lines'])
 
             elif md['service'] in ['hdfs', 's3a']:
@@ -965,31 +950,31 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     .json(md['url'])
             else:
                 logging.error(
-                    f'Unknown resource service "{md["service"]}"', 
+                    f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return False     
-                               
+                return False
+
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
         except Exception as e:
             logging.error({'md': md, 'error_msg': str(e)})
             raise e
-    
+
         return True
 
     def save_jdbc(self, obj, path=None, provider=None, *args, mode=None, **kwargs):
         md = Resource(
-                path, 
-                provider, 
-                format='jdbc', 
+                path,
+                provider,
+                format='jdbc',
                 mode=mode,
                 **kwargs)
 
         options = md['options']
-        
+
         # after collecting from metadata, or method call, define csv defaults
         options['mode'] = options['mode'] or 'overwrite'
-                               
+
         try:
             #three approaches: local, cluster, and service
             if md['service'] in ['sqlite', 'mysql', 'postgres', 'mssql', 'clickhouse', 'oracle']:
@@ -1005,45 +990,40 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     .save()
             else:
                 logging.error(
-                    f'Unknown resource service "{md["service"]}"', 
+                    f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return False     
-                               
+                return False
+
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
         except Exception as e:
             logging.error({'md': md, 'error_msg': str(e)})
             raise e
-    
+
         return True
 
-    def save_mongo(self, path=None, provider=None, *args, **kwargs): 
+    def save_mongo(self, path=None, provider=None, *args, **kwargs):
         md = Resource(
                 path,
                 provider,
-                format='com.mongodb.spark.sql.DefaultSource',
+                format='mongo',
                 **kwargs)
 
         options = md['options']
 
         try:
             if md['service'] == 'mongodb':
-                qm_index = md['url'].index('?')
-                base_cs = md['url'][:qm_index] if qm_index else md['url']
-                options_cs = md['url'][qm_index:] if qm_index else ''
-                uri = f"{base_cs}.{md['resource_path']}{options_cs}"
-
                 obj.write \
-                    .format('com.mongodb.spark.sql.DefaultSource') \
-                    .option('spark.mongodb.input.uri', uri ) \
+                    .format('mongo') \
+                    .option('uri', md['url']) \
                     .options(**options) \
                     .mode(options['mode']) \
                     .save(**kwargs)
             else:
                 logging.error(
-                    f'Unknown resource service "{md["service"]}"', 
+                    f'Unknown resource service "{md["service"]}"',
                     extra={'md': to_dict(md)})
-                return False     
+                return False
 
         except AnalysisException as e:
             logging.error(str(e), extra={'md': md})
@@ -1056,9 +1036,9 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
     def save(self, obj, path=None, provider=None, *args, format=None, mode=None, **kwargs):
 
         md = Resource(
-                path, 
-                provider, 
-                format=format, 
+                path,
+                provider,
+                format=format,
                 mode=mode,
                 **kwargs)
 
@@ -1075,7 +1055,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             return self.save_parquet(obj, path, provider, mode=mode, **kwargs)
         elif md['format'] == 'jdbc':
             return self.save_jdbc(obj, path, provider, mode=mode, **kwargs)
-        elif md['format'] == 'com.mongodb.spark.sql.DefaultSource':
+        elif md['format'] == 'mongo':
             return self.save_mongo(obj, path, provider, mode=mode, **kwargs)
         else:
             logging.error(f'Unknown format "{md["service"]}"', extra={'md':md})

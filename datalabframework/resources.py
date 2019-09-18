@@ -161,7 +161,6 @@ def resource_from_dict(d):
     return md
 
 def resource_from_urn(urn):
-    
     md = get_default_md()
     query = get_sql_query(urn.path)
     if query:
@@ -219,7 +218,6 @@ def get_sql_query(s):
         return None
 
 def to_resource(url_alias=None, *args, **kwargs):
-    
     md = None
     
     # if a dict, create from dictionary
@@ -233,7 +231,7 @@ def to_resource(url_alias=None, *args, **kwargs):
         
         if not md and url_alias in metadata.profile().get('providers', {}).keys():
             md = metadata.profile()['providers'][url_alias]
-    
+
     # if nothing found yet, interpret as a urn/path
     if not md and url_alias:
         md = resource_from_urn(urnparse(url_alias))
@@ -282,7 +280,7 @@ def get_format(md):
         return 'jdbc'
 
     if md['service'] in ['mongodb']:
-        return 'com.mongodb.spark.sql.DefaultSource'
+        return 'mongo'
 
     if md['service'] in ['elastic']:
         return 'json'
@@ -338,7 +336,7 @@ def get_version(service):
         'mysql': '8.0.12',
         'postgres': '42.2.5',
         'mssql': '6.4.0.jre8',
-        'mongodb': '2.2.0',
+        'mongodb': '2.4.1',
         'oracle': '12.2.0.1',
         'clickhouse':'0.1.54',
         's3a':'3.1.1'
@@ -348,9 +346,9 @@ def get_version(service):
 def get_url(md):
     service = md['service']
     path = md['path']
-    
+
     host_port = f"{md['host']}:{md['port']}" if md['port'] else md['host']
-    
+
     if  service in ['local', 'file']:
         url = path
     elif service == 'sqlite':
@@ -374,30 +372,28 @@ def get_url(md):
     elif service == 'elastic':
         url = f"http://{host_port}/{md['database']}"
     elif service == 'mongodb':
-        url = f"mongodb://{md['username']}:{md['password']}@{host_port}/{md['database']}"
+        url = f"mongodb://{md['user']}:{md['password']}@{host_port}/{md['path']}"
 
     return url
 
 
 def process_metadata(md):
-    
-    
-    # update format from 
+    # update format from
     md['format'] = get_format(md)
-    
+
     # if no service, at this point use file
     md['service'] = md['service'] or 'file'
-    
+
     # standardize some service names
     services = {
         'minio': 's3a',
         'local': 'file'
     }
     md['service'] = services.get(md['service'], md['service'])
-    
+
     # if no host, use localhost
     md['host'] = md['host'] or '127.0.0.1'
-        
+
     # if local file system and rel path, prepend rootdir
     if md['service'] in ['file', 'sqlite'] and not os.path.isabs(md['path']):
         md['path'] = os.path.join(rootdir(), md['path'])
@@ -406,17 +402,21 @@ def process_metadata(md):
     if md['service'] == 's3a' and md['path']:
         md['path'] = md['path'].lstrip('/')
 
+    # if service is mongodb, use '.' instead of '/'
+    if md['service'] == 'mongodb' and md['path']:
+        md['path'] = md['path'].replace('/', '.')
+
     # generate database, table from path
     if md['format']=='jdbc':
         md['database'], md['table'], md['path'] = path_to_jdbc(md)
 
         # set driver
         md['driver'] = md['driver'] or get_driver(md['service'])
-        
+
         # if not table, provide no result query
         md['table'] = md['table'] or 'SELECT 0 as result where 1 = 0'
-        
-        # if schema is not yet defined, 
+
+        # if schema is not yet defined,
         # take the default for each service
         default_schemas = {
             'mysql': md['database'],
@@ -425,9 +425,9 @@ def process_metadata(md):
             'clickhouse': 'default',
             'oracle': md['user']
         }
-        
+
         md['schema'] = md['schema'] or default_schemas.get(md['service'])
-        
+
         query = get_sql_query(md['table'])
         if query and not query.endswith('as _query'):
             md['table'] = '( {} ) as _query'.format(query)
@@ -440,19 +440,19 @@ def process_metadata(md):
 
     if not isinstance(md['options'], dict):
         md['options'] = {}
-    
+
     compression = get_compression(md['path'])
     if md['format']!='jdbc' and compression:
         md['options']['compression'] = compression
-    
+
     h_list = []
     for k in ['url', 'format', 'table', 'database']:
         v = zlib.crc32(md[k].encode()) if md[k] else 0
         h_list.append(v)
-        
+
     md['hash'] = functools.reduce(lambda a,b : a^b, h_list)
     md['hash'] = hex(ctypes.c_size_t(md['hash']).value)
-    
+
     return md
 
 def assemble_metadata(md):
@@ -509,8 +509,7 @@ def Resource(path_or_alias_or_url=None, provider_path_or_alias_or_url=None,
 
     # merge provider and resource metadata
     md = merge(pmd,rmd)
-    
-    
+
     # concatenate paths, if no table is defined
     if md['table']:
         md['path'] = None
@@ -519,10 +518,10 @@ def Resource(path_or_alias_or_url=None, provider_path_or_alias_or_url=None,
 
     #process metadata
     md = process_metadata(md)
-    
+
     #todo: verify resource
     # check format and other minimum requirements are met
-    
+
     # assemble output
     md = assemble_metadata(md)
 
@@ -536,3 +535,4 @@ def get_local(md):
         return Resource(md)
     else:
         return md
+

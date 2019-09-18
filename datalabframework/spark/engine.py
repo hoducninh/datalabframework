@@ -133,7 +133,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         submit_objs = dict()
         for submit_type in submit_types:
-            submit_objs[submit_type] = []
+            submit_objs[submit_type] = {} if submit_type == 'conf' else []
 
         if not services:
             return submit_objs
@@ -193,11 +193,11 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 service_url = 'http://{}:{}'.format(v['host'], v['port'])
                 s3a = "org.apache.hadoop.fs.s3a.S3AFileSystem"
 
-                conf.append(("spark.hadoop.fs.s3a.endpoint", service_url))
-                conf.append(("spark.hadoop.fs.s3a.access.key", v['user']))
-                conf.append(("spark.hadoop.fs.s3a.secret.key", v['password']))
-                conf.append(("spark.hadoop.fs.s3a.impl", s3a))
-                conf.append(("spark.hadoop.fs.s3a.path.style.access", "true"))
+                conf["spark.hadoop.fs.s3a.endpoint"] = service_url
+                conf["spark.hadoop.fs.s3a.access.key"] = v['user']
+                conf["spark.hadoop.fs.s3a.secret.key"] = v['password']
+                conf["spark.hadoop.fs.s3a.impl"] = s3a
+                conf["spark.hadoop.fs.s3a.path.style.access"] = "true"
                 break
 
         return submit_objs
@@ -210,9 +210,9 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             submit_args += f' --{k} {s}' if s else ''
 
         # submit config options one by one
-        for c in self.submit['conf']:
-            submit_args += f' --conf {c[0]}={c[1]}'
-            
+        for k, v in self.submit['conf'].items():
+            submit_args += f' --conf {k}={v}'
+
         #### print debug
         for k in self.submit.keys():
             if self.submit[k]:
@@ -250,7 +250,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             'py-files': [pyfiles] if isinstance(pyfiles, str) else pyfiles or [],
             'files': [files] if isinstance(files, str) else files or [],
             'repositories': [repositories] if isinstance(repositories, str) else repositories or [],
-            'conf': [conf] if isinstance(conf, tuple) else conf or [],
+            'conf': conf or {}
         }
 
         # suppress INFO logging for java_gateway
@@ -261,10 +261,11 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         # detect packages and configuration from services
         detected = self.detect_submit_params(services)
-        
+
         # merge up with those passed with the init
-        for k in self.submit.keys():
+        for k in self.submit.keys() - {'conf'}:
             self.submit[k] = list(sorted(set(self.submit[k] + detected[k])))
+        self.submit['conf'] = merge(detected['conf'], self.submit['conf'])
 
         #set submit args via env variable
         self.set_submit_args()

@@ -37,6 +37,12 @@ properties:
                     py-files:
                         type: array
                         default: []
+                    repositories:
+                        type: array
+                        default: []
+                    conf:
+                        type: object
+                        default: {}
                 additionalProperties: false
         additionalProperties: false
 

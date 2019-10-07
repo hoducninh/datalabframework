@@ -1,6 +1,6 @@
-from datalabframework.metadata import resource
-from datalabframework._utils import merge
-from datalabframework import paths
+from datafaucet.metadata import resource
+from datafaucet._utils import merge
+from datafaucet import paths
 
 import os
 

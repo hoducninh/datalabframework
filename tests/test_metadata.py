@@ -1,6 +1,6 @@
-from datalabframework.metadata import reader
-from datalabframework import paths
-from datalabframework._utils import Singleton
+from datafaucet.metadata import reader
+from datafaucet import paths
+from datafaucet._utils import Singleton
 
 import os
 from textwrap import dedent

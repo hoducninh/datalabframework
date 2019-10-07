@@ -680,6 +680,39 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         return obj
 
+    def load_event_log(self, path=None, provider=None, versionAsOf=None, *args, **kwargs):
+        obj = None
+
+        md = Resource(
+                path,
+                provider,
+                format='event_log',
+                **kwargs)
+
+        options = md['options']
+
+        try:
+            if md['service'] in ['hdfs', 's3a']:
+                version = self.find_version(versionAsOf, path, provider)
+                if not version:
+                    logging.error('No version of data detected', extra={'md': md})
+                    return obj
+                version = version.strftime('%Y-%m-%d-%H-%M-%S')
+                url = f'{md["url"]}/_version={version}'
+                obj = self.context.read.options(**options).parquet(url)
+            else:
+                logging.error(
+                    f'Unknown resource service "{md["service"]}"',
+                    extra={'md': to_dict(md)})
+                return obj
+
+        except AnalysisException as e:
+            logging.error(str(e), extra={'md': md})
+        except Exception as e:
+            logging.error(str(e), extra={'md': md})
+
+        return obj
+
     def load(self, path=None, provider=None, *args, format=None, **kwargs):
 
         md = Resource(
@@ -698,6 +731,8 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             return self.load_jdbc(path, provider, **kwargs)
         elif md['format'] == 'mongo':
             return self.load_mongo(path, provider, **kwargs)
+        elif md['format'] == 'event_log':
+            return self.load_event_log(path, provider, **kwargs)
         else:
             logging.error(
                     f'Unknown resource format "{md["format"]}"',
@@ -1033,6 +1068,43 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         return True
 
+    def save_event_log(self, obj, path=None, provider=None, *args,
+                    mode=None, partitionBy=None, **kwargs):
+
+        md = Resource(
+                path,
+                provider,
+                format='event_log',
+                mode=mode,
+                **kwargs)
+        options = md['options']
+
+        # after collecting from metadata, or method call, define defaults
+        options['mode'] = options['mode'] or 'append'
+        try:
+            if md['service'] in ['hdfs', 's3a']:
+                obj = dataframe.add_version_column(obj)
+                partitionBy = ['_version'] + (partitionBy or [])
+                obj.write\
+                    .format('parquet')\
+                    .mode(options['mode'])\
+                    .partitionBy(partitionBy)\
+                    .options(**options)\
+                    .parquet(md['url'])
+            else:
+                logging.error(
+                    f'Unknown resource service "{md["service"]}"',
+                    extra={'md': to_dict(md)})
+                return False
+
+        except AnalysisException as e:
+            logging.error(str(e), extra={'md': md})
+        except Exception as e:
+            logging.error({'md': md, 'error_msg': str(e)})
+            raise e
+
+        return True
+
     def save(self, obj, path=None, provider=None, *args, format=None, mode=None, **kwargs):
 
         md = Resource(
@@ -1057,6 +1129,8 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
             return self.save_jdbc(obj, path, provider, mode=mode, **kwargs)
         elif md['format'] == 'mongo':
             return self.save_mongo(obj, path, provider, mode=mode, **kwargs)
+        elif md['format'] == 'event_log':
+            return self.save_event_log(obj, path, provider, mode=mode, **kwargs)
         else:
             logging.error(f'Unknown format "{md["service"]}"', extra={'md':md})
             return False
@@ -1171,26 +1245,32 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
 
         logging.notice(log_data) if result else logging.error(log_data)
 
+    def find_version(self, versionAsOf=None, path=None, provider=None):
+        try:
+            versions = self.list(provider, path)
+        except:
+            return None
+
+        versions = versions.filter(F.col('name').like('_version=%'))\
+                           .select(F.to_timestamp(F.split(F.col('name'), '=').getItem(1), 'yyyy-MM-dd-HH-mm-ss')\
+                           .alias('version'))
+        if versionAsOf:
+            versions = versions.filter(F.col('version') <= versionAsOf)
+        version = versions.agg(F.max('version').alias('max')).collect()
+        return version[0].max if version else None
 
     def list(self, provider, path=''):
         df_schema = T.StructType([
             T.StructField('name', T.StringType(), True),
             T.StructField('type', T.StringType(), True)])
-    
-        df_empty = self._ctx.createDataFrame(data=(), schema=df_schema)
-    
-        if isinstance(provider, str):
-            md = resource.metadata(self._rootdir, self._metadata, None, provider)
-        elif isinstance(provider, dict):
-            md = provider
-        else:
-            logging.warning(f'{str(provider)} cannot be used to reference a provider')
-            return df_empty
-    
+
+        df_empty = self.context.createDataFrame(data=(), schema=df_schema)
+        md = Resource(path, provider)
+
         try:
             if md['service'] in ['local', 'file']:
                 lst = []
-                rootpath = os.path.join(md['provider_path'], path)
+                rootpath = os.path.join(md['url'], path)
                 for f in os.listdir(rootpath):
                     fullpath = os.path.join(rootpath, f)
                     if os.path.isfile(fullpath):
@@ -1203,29 +1283,25 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                         obj_type = 'MOUNT'
                     else:
                         obj_type = 'UNDEFINED'
-    
+
                     obj_name = f
                     lst += [(obj_name, obj_type)]
-    
+
                 if lst:
-                    df = self._ctx.createDataFrame(lst, ['name', 'type'])
+                    df = self.context.createDataFrame(lst, ['name', 'type'])
                 else:
                     df = df_empty
-    
+
                 return df
-    
+
             elif md['service'] in ['hdfs', 'minio', 's3a']:
-                sc = self._ctx._sc
+                sc = self.context._sc
                 URI = sc._gateway.jvm.java.net.URI
                 Path = sc._gateway.jvm.org.apache.hadoop.fs.Path
                 FileSystem = sc._gateway.jvm.org.apache.hadoop.fs.FileSystem
                 fs = FileSystem.get(URI(md['url']), sc._jsc.hadoopConfiguration())
-    
-                provider_path = md['provider_path'] if md['service'] == 'hdfs' else '/'
-                obj = fs.listStatus(Path(os.path.join(provider_path, path)))
-    
+                obj = fs.listStatus(Path(md['url']))
                 lst = []
-    
                 for i in range(len(obj)):
                     if obj[i].isFile():
                         obj_type = 'FILE'
@@ -1233,17 +1309,17 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                         obj_type = 'DIRECTORY'
                     else:
                         obj_type = 'UNDEFINED'
-    
+
                     obj_name = obj[i].getPath().getName()
                     lst += [(obj_name, obj_type)]
-    
+
                 if lst:
-                    df = self._ctx.createDataFrame(lst, ['name', 'type'])
+                    df = self.context.createDataFrame(lst, ['name', 'type'])
                 else:
                     df = df_empty
-    
+
                 return df
-    
+
             elif md['format'] == 'jdbc':
                 # remove options from database, if any
                 database = md["database"].split('?')[0]
@@ -1251,7 +1327,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 if md['service'] == 'mssql':
                     query = f"""
                             ( SELECT table_name, table_type
-                              FROM INFORMATION_SCHEMA.TABLES
+                              FROM information_schema.tables
                               WHERE table_schema='{schema}'
                             ) as query
                             """
@@ -1259,7 +1335,7 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                     query = f"""
                             ( SELECT table_name, table_type
                              FROM all_tables
-                             WHERE table_schema='{schema}'
+                             WHERE owner='{schema}'
                             ) as query
                             """
                 elif md['service'] == 'mysql':
@@ -1279,37 +1355,38 @@ class SparkEngine(EngineBase, metaclass=EngineSingleton):
                 else:
                     # vanilla query ... for other databases
                     query = f"""
-                                ( SELECT table_name, table_type
-                                  FROM information_schema.tables'
-                                ) as query
-                                """
-    
-                obj = self._ctx.read \
+                            ( SELECT table_name, table_type
+                              FROM information_schema.tables'
+                            ) as query
+                            """
+
+                obj = self.context.read \
                     .format('jdbc') \
                     .option('url', md['url']) \
                     .option("dbtable", query) \
                     .option("driver", md['driver']) \
-                    .option("user", md['username']) \
+                    .option("user", md['user']) \
                     .option('password', md['password']) \
                     .load()
-    
+
                 # load the data from jdbc
                 lst = []
-                for x in obj.select('TABLE_NAME', 'TABLE_TYPE').collect():
-                    lst.append((x.TABLE_NAME, x.TABLE_TYPE))
-    
+                for x in obj.select('table_name', 'table_type').collect():
+                    lst.append((x.table_name, x.table_type))
+
                 if lst:
-                    df = self._ctx.createDataFrame(lst, ['name', 'type'])
+                    df = self.context.createDataFrame(lst, ['name', 'type'])
                 else:
                     df = df_empty
-    
+
                 return df
-    
+
             else:
                 logging.error({'md': md, 'error_msg': f'List resource on service "{md["service"]}" not implemented'})
                 return df_empty
         except Exception as e:
             logging.error({'md': md, 'error_msg': str(e)})
             raise e
-    
+
         return df_empty
+

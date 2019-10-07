@@ -138,6 +138,15 @@ def to_timestamp(obj, column, tzone='UTC'):
 
     return f
 
+def add_version_column(obj, version_time=None, version_colname = '_version', tzone='UTC'):
+    version = version_time if version_time else datetime.now(pytz.timezone(tzone if tzone else 'UTC'))
+    ts = datetime.strftime(version, '%Y-%m-%d-%H-%M-%S')
+    if version_colname not in obj.columns:
+        obj = obj.withColumn(version_colname, F.lit(ts))
+    else:
+        logging.error('Invalid version column name')
+    return obj
+
 def add_datetime_columns(obj, column=None, date_col = '_date', datetime_col = '_datetime', tzone='UTC'):
     if column in obj.columns:
         obj = obj.withColumn(datetime_col, to_timestamp(obj, column, tzone))

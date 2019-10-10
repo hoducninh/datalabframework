@@ -176,17 +176,17 @@ class Project(metaclass = Singleton):
         md = metadata.profile()['engine']
         engines.Engine(
             md['type'],
-            session_name=self._session_name, 
+            session_name=self._session_name,
             session_id=self._session_id,
-            master = md['master'], 
-            timezone=md['timezone'], 
-            jars=md['submit']['jars'], 
-            packages=md['submit']['packages'], 
-            pyfiles=md['submit']['pyfiles'], 
-            files=md['submit']['files'], 
-            repositories = md['submit']['repositories'], 
+            master = md['master'],
+            timezone=md['timezone'],
+            jars=md['submit']['jars'],
+            packages=md['submit']['packages'],
+            pyfiles=md['submit']['py-files'],
+            files=md['submit']['files'],
+            repositories = md['submit']['repositories'],
             conf=md['submit']['conf'],
-            services=services 
+            services=services
         )
 
         # initialize logging

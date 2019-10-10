@@ -522,7 +522,7 @@ class Metadata(metaclass=Singleton):
                 ('submit', (
                     'jars',
                     'packages',
-                    'pyfiles',
+                    'py-files',
                     'files',
                     'repositories',
                     'conf',

@@ -148,12 +148,20 @@ class KafkaLoggingHandler(logging.Handler):
         logging.Handler.__init__(self)
 
         self.topic = topic
-        self.producer = KafkaProducer(bootstrap_servers=bootstrap_servers)
+        self.producer = None
+        try:
+            self.producer = KafkaProducer(bootstrap_servers=bootstrap_servers)
+        except Exception as e:
+            print('ERROR:datafaucet:KafkaLoggingHandler', str(e), ' - disabling kafka logging handler')
 
     def emit(self, record):
-        msg = self.format(record).encode("utf-8")
-        self.producer.send(self.topic, msg)
-
+        if self.producer:
+            try:
+                msg = self.format(record).encode("utf-8")
+                self.producer.send(self.topic, msg)
+            except Exception as e:
+                print('ERROR:datafaucet:KafkaLoggingHandler', str(e), ' - skip kafka logging statement')
+                
     def close(self):
         if self.producer is not None:
             self.producer.flush()

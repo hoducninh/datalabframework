@@ -128,7 +128,7 @@ class JsonFormatter(logging.Formatter):
         timestamp = timestamp.strftime('%Y-%m-%dT%H:%M:%S.%f')
 
         log_record = {
-            '@timestamp': timestamp,
+            '@timestamp': timesstamp,
             'severity': logr.levelname,
             'sid': logr.dfc_sid,
             'repohash': logr.dfc_repohash,
@@ -163,12 +163,17 @@ class KafkaLoggingHandler(logging.Handler):
                 print('ERROR:datafaucet:KafkaLoggingHandler', str(e), ' - skip kafka logging statement')
                 
     def close(self):
-        if self.producer is not None:
-            self.producer.flush()
-            if hasattr(KafkaProducer, 'stop'):
-                self.producer.stop()
-            self.producer.close()
-        logging.Handler.close(self)
+        if self.producer:
+            try:
+                self.producer.flush()
+            except Exception as e:
+                print('WARNING:datafaucet:KafkaLoggingHandler', str(e), ' - could not flush')
+            try:
+                if hasattr(KafkaProducer, 'stop'):
+                    self.producer.stop()
+                self.producer.close()
+            except Exception as e:
+                print('WARNING:datafaucet:KafkaLoggingHandler', str(e), ' - could not stop'
 
 
 levels = {
@@ -198,7 +203,7 @@ def init_kafka(logger, level, md):
         kafka_logger = logging.getLogger(i)
         kafka_logger.propagate = False
         kafka_logger.handlers = []
-            
+
     formatter = JsonFormatter()
     handlerKafka = KafkaLoggingHandler(topic, hosts)
     handlerKafka.setLevel(level)

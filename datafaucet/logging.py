@@ -173,7 +173,7 @@ class KafkaLoggingHandler(logging.Handler):
                     self.producer.stop()
                 self.producer.close()
             except Exception as e:
-                print('WARNING:datafaucet:KafkaLoggingHandler', str(e), ' - could not stop'
+                print('WARNING:datafaucet:KafkaLoggingHandler', str(e), ' - could not stop')
 
 
 levels = {

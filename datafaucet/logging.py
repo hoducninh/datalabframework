@@ -9,29 +9,34 @@ try:
 except:
     KafkaProducer = None
 
+import getpass
 import datetime
 import json
 
 import os
 import sys
 from numbers import Number
-from collections import MutableMapping
+
+import uuid
 
 # import a few help methods
-from datafaucet import paths
-from datafaucet import files
+from datalabframework import paths
+from datalabframework import files
+from datalabframework import metadata
 
-from datafaucet._utils import repo_data, merge
+from datalabframework._utils import repo_data
 
 def func_name(level=1):
+    # noinspection PyProtectedMember
     try:
+        #print(','.join([sys._getframe(x).f_code.co_name for x in range(level)]))
         name = sys._getframe(level).f_code.co_name
         if name=='<module>':
             name = sys._getframe(level+1).f_code.co_name
             
         return name 
     except:
-        return '-'
+        return '?'
 
 # logging object is a singleton
 _logger = None
@@ -54,16 +59,18 @@ class LoggerAdapter(logging.LoggerAdapter):
         """
         self.logger = logger
         self.extra = {
-            'dfc_sid': None,
-            'dfc_username': None,
-            'dfc_filepath': None,
-            'dfc_reponame': None,
-            'dfc_repohash': None,
-            'dfc_funcname': None,
-            'dfc_data': {}
+            'dlf_username': getpass.getuser(),
+            'dlf_filename': os.path.relpath(files.get_current_filename(), paths.rootdir()),
+            'dlf_repo_name': repo_data()['name'],
+            'dlf_repo_hash': repo_data()['hash'],
+            'ci_pipeline_iid': os.getenv('CI_PIPELINE_IID', default=str(uuid.uuid4())[:7]),
+            'ci_pipeline_id': os.getenv('CI_PIPELINE_ID', default=str(uuid.uuid4())[:7]),
+            'gitlab_user_email': os.environ.get('GITLAB_USER_EMAIL'),
+            'gitlab_user_login': os.environ.get('GITLAB_USER_LOGIN')
         }
         
         self.extra.update(extra)
+
 
     def process(self, msg, kwargs):
         """
@@ -75,17 +82,9 @@ class LoggerAdapter(logging.LoggerAdapter):
         LoggerAdapter subclass for your specific needs.
         """
         d = self.extra
-        d.update({'dfc_funcname': func_name(5)})
+        d.update({'dlf_func': func_name(5)})
+        d.update(kwargs.get('extra', {}))
         
-        if isinstance(msg, MutableMapping):
-            merged = merge(msg, kwargs.get('extra', {}))
-            d.update({'dfc_data': merged})
-            msg = 'data'
-        elif isinstance(msg, str):
-            d.update({'dfc_data': kwargs.get('extra', {})})
-        else:
-            raise ValueError('log message must be a str or a dict')
-            
         kwargs["extra"] = d
         return msg, kwargs
 
@@ -105,7 +104,8 @@ def _json_default(obj):
         return str(obj)
 
 
-class JsonFormatter(logging.Formatter):
+# noinspection PyUnusedLocal
+class LogstashFormatter(logging.Formatter):
     """
     A custom formatter to prepare logs to be
     shipped out to logstash.
@@ -124,20 +124,27 @@ class JsonFormatter(logging.Formatter):
         """
 
         logr = record
-        timestamp = datetime.datetime.fromtimestamp(logr.created)
-        timestamp = timestamp.strftime('%Y-%m-%dT%H:%M:%S.%f')
+        timestamp = datetime.datetime.fromtimestamp(logr.created).strftime('%Y-%m-%dT%H:%M:%S.%f')
+
+        if type(logr.msg) is dict:
+            msg = logr.msg
+        else:
+            msg = {'message': logr.msg}
 
         log_record = {
-            '@timestamp': timesstamp,
+            '@timestamp': timestamp,
             'severity': logr.levelname,
-            'sid': logr.dfc_sid,
-            'repohash': logr.dfc_repohash,
-            'reponame': logr.dfc_reponame,
-            'username': logr.dfc_username,
-            'filepath': logr.dfc_filepath,
-            'funcname': logr.dfc_funcname,
-            'message': logr.msg,
-            'data': logr.dfc_data
+            'session_id': logr.dlf_session_id,
+            'repo_hash': logr.dlf_repo_hash,
+            'repo_name': logr.dlf_repo_name,
+            'username': logr.dlf_username,
+            'filename': logr.dlf_filename,
+            'func': logr.dlf_func,
+            'data': msg,
+            'pipeline_id': logr.ci_pipeline_id,
+            'pipeline_iid': logr.ci_pipeline_iid,
+            'user_email': logr.gitlab_user_email,
+            'user_login': logr.gitlab_user_login
         }
 
         return json.dumps(log_record, default=_json_default)
@@ -148,32 +155,19 @@ class KafkaLoggingHandler(logging.Handler):
         logging.Handler.__init__(self)
 
         self.topic = topic
-        self.producer = None
-        try:
-            self.producer = KafkaProducer(bootstrap_servers=bootstrap_servers)
-        except Exception as e:
-            print('ERROR:datafaucet:KafkaLoggingHandler', str(e), ' - disabling kafka logging handler')
+        self.producer = KafkaProducer(bootstrap_servers=bootstrap_servers, acks='all')
 
     def emit(self, record):
-        if self.producer:
-            try:
-                msg = self.format(record).encode("utf-8")
-                self.producer.send(self.topic, msg)
-            except Exception as e:
-                print('ERROR:datafaucet:KafkaLoggingHandler', str(e), ' - skip kafka logging statement')
-                
+        msg = self.format(record).encode("utf-8")
+        self.producer.send(self.topic, msg)
+
     def close(self):
-        if self.producer:
-            try:
-                self.producer.flush()
-            except Exception as e:
-                print('WARNING:datafaucet:KafkaLoggingHandler', str(e), ' - could not flush')
-            try:
-                if hasattr(KafkaProducer, 'stop'):
-                    self.producer.stop()
-                self.producer.close()
-            except Exception as e:
-                print('WARNING:datafaucet:KafkaLoggingHandler', str(e), ' - could not stop')
+        if self.producer is not None:
+            self.producer.flush()
+            if hasattr(KafkaProducer, 'stop'):
+                self.producer.stop()
+            self.producer.close()
+        logging.Handler.close(self)
 
 
 levels = {
@@ -182,131 +176,79 @@ levels = {
     'notice': NOTICE_LEVELV_NUM,
     'warning': logging.WARNING,
     'error': logging.ERROR,
-    'critical': logging.CRITICAL
+    'fatal': logging.FATAL
 }
 
-def init_kafka(logger, level, md):
-    p = md['datafaucet']['kafka'] 
-    if p and p['enable'] and KafkaProducer:
-        level = levels.get(p['severity'] or level)
-        topic = p['topic'] or 'dfc'
-        hosts = p['hosts']
-    else:
-        return
+class DlfFilter(logging.Filter):
+    """
+    This is a filter which injects contextual information into the log.
+    """
+
+    def filter(self, record):
+        record.dlf_func = func_name()
+        return True
     
-    if not hosts:
-        logging.warning('Logging on kafka: no hosts defined')
-        return
-
-    # disable logging for 'kafka.KafkaProducer', kafka.conn
-    for i in ['kafka.KafkaProducer','kafka.conn']:
-        kafka_logger = logging.getLogger(i)
-        kafka_logger.propagate = False
-        kafka_logger.handlers = []
-
-    formatter = JsonFormatter()
-    handlerKafka = KafkaLoggingHandler(topic, hosts)
-    handlerKafka.setLevel(level)
-    handlerKafka.setFormatter(formatter)
-    logger.addHandler(handlerKafka)
-
-def init_stdout(logger, level, md):    
-    p = md['datafaucet']['stdout']
-    
-    # legacy param
-    p = p or md['datafaucet']['stream']
-    
-    if p and p['enable']:
-        level = levels.get(p['severity'] or level)
-    else:
-        return
-    
-    #'%(asctime)s',
-    #'%(levelname)s',
-    #'%(dfc_sid)s',
-    #'%(dfc_repohash)s',
-    #'%(dfc_reponame)s',
-    #'%(dfc_filepath)s',
-    #'%(dfc_funcname)s'
-    #'%(message)s'
-    #'%(dfc_data)s')
-    
-    # create console handler and set level to debug
-    formatter = logging.Formatter('%(levelname)s:%(name)s:%(dfc_funcname)s %(message)s')
-
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(level)
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
-
-file_handler = None
-def init_file(logger, level, md):    
-    global file_handler
-
-    p = md['datafaucet']['file']
-    if p and p['enable']:
-        level = levels.get(p['severity'] or level)
-    else:
-        return
-
-    path = p['path'] or f'{logger.name}.log'
-    try:
-        if file_handler:
-            file_handler.close()
-            
-        file_handler = open(path, 'w')
-        formatter = JsonFormatter()
-        handler = logging.StreamHandler(file_handler)
-        handler.setLevel(level)
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-    except e:
-        print(e)
-        print(f'Cannot open log file {path} for writing.')
-        
-def init(
-    md=None, 
-    sid=None, 
-    username=None, 
-    filepath=None, 
-    reponame=None, 
-    repohash=None):
-    
+def init(md=None, session_id=0):
     global _logger
 
-    if not md:
-        _logger = logging.getLogger('dfc')
-        return
+    md = md if md else {}
 
+    level = levels.get(md.get('loggers', {}).get('root', {}).get('severity', 'info'))
+    
     # root logger
-    level = levels.get(md['root']['severity'] or 'info')
     logging.basicConfig(level=level)
     
-    # dfc logger
-    logger_name = md['datafaucet']['name'] or 'dfc'
+    # dlf logger
+    logger_name = md.get('loggers', {}).get('datalabframework',{}).get('name', 'dlf')
     logger = logging.getLogger(logger_name)
     logger.setLevel(level)
     logger.handlers = []
     
-    # init handlers
-    init_kafka(logger, level, md)
-    init_stdout(logger, level, md)
-    init_file(logger, level, md)
+    p = md.get('loggers', {}).get('datalabframework',{}).get('kafka')
+    if p and p['enable'] and KafkaProducer:
+        level = levels.get(p.get('severity', 'info'))
+        topic = p.get('topic', 'dlf')
+        hosts = p.get('hosts')
+
+        # disable logging for 'kafka.KafkaProducer', kafka.conn
+        for i in ['kafka.KafkaProducer','kafka.conn']:
+            kafka_logger = logging.getLogger(i)
+            kafka_logger.propagate = False
+            kafka_logger.handlers = []
+            
+        formatterLogstash = LogstashFormatter()
+        handlerKafka = KafkaLoggingHandler(topic, hosts)
+        handlerKafka.setLevel(level)
+        handlerKafka.setFormatter(formatterLogstash)
+        logger.addHandler(handlerKafka)
+        
+    p = md.get('loggers', {}).get('datalabframework',{}).get('file')
+    if p and p['enable'] and KafkaProducer:
+        level = levels.get(p.get('severity', 'info'))
+        filename = p.get('filename', 'dlf.log')
+            
+        formatterLogstash = LogstashFormatter()
+        handlerFile = logging.FileHandler(filename)
+        handlerFile.setLevel(level)
+        handlerFile.setFormatter(formatterLogstash)
+        logger.addHandler(handlerFile)
+
+    p = md.get('loggers', {}).get('datalabframework',{}).get('stream')
+    if p and p['enable']:
+        level = levels.get(p.get('severity', 'info'))
+
+        # create console handler and set level to debug
+        formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(dlf_session_id)s - %(dlf_repo_hash)s - %(dlf_repo_name)s - %(dlf_username)s - %(dlf_filename)s - %(dlf_func)s - %(message)s')
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setLevel(level)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+
+        # stream replaces higher handlers, setting propagate to false
+        logger.propagate = False
     
-    # stream replaces higher handlers, setting propagate to false
-    logger.propagate = False
-    
-    # configure context
-    dfc_extra = {
-        'dfc_sid': sid,
-        'dfc_repohash': repohash,
-        'dfc_reponame': reponame,
-        'dfc_username': username,
-        'dfc_filepath': filepath
-    }
-    
-    # setup adapter
-    adapter = LoggerAdapter(logger, dfc_extra)
+    adapter = LoggerAdapter(logger, {'dlf_session_id':session_id})
     
     #set global _logger
     _logger = adapter
@@ -315,9 +257,6 @@ def _notice(msg, *args, **kwargs):
     logger = getLogger()
     if logger.isEnabledFor(NOTICE_LEVELV_NUM):
         logger.log(NOTICE_LEVELV_NUM, msg, *args, **kwargs) 
-
-def debug(msg, *args, **kwargs):
-    getLogger().debug(msg, *args, **kwargs)
 
 def info(msg, *args, **kwargs):
     getLogger().info(msg, *args, **kwargs)
@@ -331,5 +270,5 @@ def warning(msg, *args, **kwargs):
 def error(msg, *args, **kwargs):
     getLogger().error(msg, *args, **kwargs)
 
-def critical(msg, *args, **kwargs):
-    getLogger().critical(msg, *args, **kwargs)
+def fatal(msg, *args, **kwargs):
+    getLogger().fatal(msg, *args, **kwargs)
